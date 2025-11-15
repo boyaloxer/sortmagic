@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Organizer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Title Bar -->
+  <div class="title-bar">
+    <div class="title-bar-left">
+      <span class="app-title">📁 File Organizer</span>
+    </div>
+    <div class="title-bar-center">
+      <input type="text" class="search-bar" placeholder="🔍 Search files...">
+    </div>
+    <div class="title-bar-right">
+      <button class="title-bar-button minimize">─</button>
+      <button class="title-bar-button maximize">□</button>
+      <button class="title-bar-button close">✕</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Left Panel - File Tree -->
+    <div class="left-panel">
+      <div class="panel-header">
+        <button id="select-folder" class="primary-button">
+          📂 Select Folder
+        </button>
+      </div>
+      <div class="file-tree" id="file-tree">
+        <div class="empty-state">
+          <p>No folder selected</p>
+          <p class="hint">Click "Select Folder" to browse</p>
+        </div>
+      </div>
+      <div class="panel-footer">
+        <div class="stats" id="folder-stats">
+          <span class="stat-item">0 files</span>
+          <span class="stat-item">0 folders</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Panel - File Preview/Details -->
+    <div class="center-panel">
+      <div class="panel-header">
+        <span id="current-file-name">No file selected</span>
+      </div>
+      <div class="file-preview" id="file-preview">
+        <div class="empty-state">
+          <div class="file-icon">📄</div>
+          <p>Select a file to preview</p>
+        </div>
+      </div>
+      <div class="file-details" id="file-details">
+        <!-- File metadata will go here -->
+      </div>
+    </div>
+
+    <!-- Right Panel - AI Chat -->
+    <div class="right-panel">
+      <div class="panel-header">
+        <span>🤖 AI Organizer</span>
+        <button class="settings-button">⚙️</button>
+      </div>
+      
+      <div class="chat-container">
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-message assistant">
+            <div class="message-avatar">🤖</div>
+            <div class="message-content">
+              <p>Hi! I'm your file organization assistant. I can help you:</p>
+              <ul>
+                <li>Organize files by type, date, or project</li>
+                <li>Clean up duplicate files</li>
+                <li>Suggest folder structures</li>
+                <li>Rename files in bulk</li>
+              </ul>
+              <p>Select a folder to get started!</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="quick-actions">
+          <button class="quick-action-btn" data-action="organize-by-type">
+            📁 By Type
+          </button>
+          <button class="quick-action-btn" data-action="organize-by-date">
+            📅 By Date
+          </button>
+          <button class="quick-action-btn" data-action="organize-by-project">
+            💼 By Project
+          </button>
+          <button class="quick-action-btn" data-action="find-duplicates">
+            🔍 Find Duplicates
+          </button>
+        </div>
+        
+        <div class="chat-input-container">
+          <textarea 
+            id="chat-input" 
+            class="chat-input" 
+            placeholder="Ask me anything about organizing your files..."
+            rows="3"
+          ></textarea>
+          <button id="send-message" class="send-button">
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
