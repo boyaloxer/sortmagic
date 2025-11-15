@@ -131,6 +131,180 @@ ipcMain.handle('move-file', async (event, sourcePath, destinationPath) => {
   }
 });
 
+// Helper function to copy file or directory recursively
+async function copyFileOrDirectory(sourcePath, destinationPath) {
+  const stats = await fs.stat(sourcePath);
+  
+  if (stats.isDirectory()) {
+    // Copy directory recursively
+    await fs.mkdir(destinationPath, { recursive: true });
+    const entries = await fs.readdir(sourcePath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const srcPath = path.join(sourcePath, entry.name);
+      const destPath = path.join(destinationPath, entry.name);
+      
+      if (entry.isDirectory()) {
+        await copyFileOrDirectory(srcPath, destPath);
+      } else {
+        await fs.copyFile(srcPath, destPath);
+      }
+    }
+  } else {
+    // Copy file
+    await fs.copyFile(sourcePath, destinationPath);
+  }
+}
+
+// Helper function to delete file or directory recursively
+async function deleteFileOrDirectory(filePath) {
+  const stats = await fs.stat(filePath);
+  
+  if (stats.isDirectory()) {
+    // Delete directory recursively
+    const entries = await fs.readdir(filePath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const entryPath = path.join(filePath, entry.name);
+      await deleteFileOrDirectory(entryPath);
+    }
+    
+    await fs.rmdir(filePath);
+  } else {
+    // Delete file
+    await fs.unlink(filePath);
+  }
+}
+
+// Copy file or directory (recursive)
+ipcMain.handle('copy-file', async (event, sourcePath, destinationPath) => {
+  try {
+    await copyFileOrDirectory(sourcePath, destinationPath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Delete file or directory (recursive)
+ipcMain.handle('delete-file', async (event, filePath) => {
+  try {
+    await deleteFileOrDirectory(filePath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Rename file or directory
+ipcMain.handle('rename-file', async (event, oldPath, newPath) => {
+  try {
+    await fs.rename(oldPath, newPath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Create folder
+ipcMain.handle('create-folder', async (event, folderPath) => {
+  try {
+    await fs.mkdir(folderPath, { recursive: true });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Create file with content
+ipcMain.handle('create-file', async (event, filePath, content = '') => {
+  try {
+    const dir = path.dirname(filePath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(filePath, content, 'utf-8');
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Write file content
+ipcMain.handle('write-file', async (event, filePath, content) => {
+  try {
+    await fs.writeFile(filePath, content, 'utf-8');
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Batch operations handler
+ipcMain.handle('batch-operations', async (event, operations) => {
+  const results = [];
+  
+  for (const operation of operations) {
+    try {
+      let success = false;
+      let error = null;
+      
+      switch (operation.type) {
+        case 'move':
+          await fs.rename(operation.source, operation.destination);
+          success = true;
+          break;
+        case 'copy':
+          await copyFileOrDirectory(operation.source, 
+                                    operation.destination);
+          success = true;
+          break;
+        case 'delete':
+          await deleteFileOrDirectory(operation.path);
+          success = true;
+          break;
+        case 'rename':
+          await fs.rename(operation.oldPath, operation.newPath);
+          success = true;
+          break;
+        case 'create-folder':
+          await fs.mkdir(operation.path, { recursive: true });
+          success = true;
+          break;
+        case 'create-file':
+          const dir = path.dirname(operation.path);
+          await fs.mkdir(dir, { recursive: true });
+          await fs.writeFile(operation.path, 
+                            operation.content || '', 'utf-8');
+          success = true;
+          break;
+        default:
+          error = 'Unknown operation type: ' + operation.type;
+      }
+      
+      results.push({
+        operation: operation,
+        success: success,
+        error: error
+      });
+    } catch (err) {
+      results.push({
+        operation: operation,
+        success: false,
+        error: err.message
+      });
+    }
+  }
+  
+  const successful = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+  
+  return {
+    total: operations.length,
+    successful: successful,
+    failed: failed,
+    results: results
+  };
+});
+
 ipcMain.handle('organize-files', async (event, files, strategy) => {
   // Simple organization by file type (fallback)
   const organized = {};

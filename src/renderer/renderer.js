@@ -339,13 +339,26 @@ async function processAICommand(command) {
     return;
   }
   
+  const lowerCommand = command.toLowerCase();
+  
+  // Check if user wants to execute pending organization
+  if ((lowerCommand === 'yes' || lowerCommand === 'execute' || 
+       lowerCommand === 'y') && window.pendingOrganization) {
+    await executeOrganization(window.pendingOrganization);
+    window.pendingOrganization = null;
+    return;
+  }
+  
+  // Check for direct file operation commands
+  if (await handleDirectFileOperation(command)) {
+    return;
+  }
+  
   if (!window.electronAPI?.suggestOrganization) {
     // Fallback to basic commands without AI
     await processBasicCommand(command);
     return;
   }
-  
-  const lowerCommand = command.toLowerCase();
   
   // Try AI-powered organization first
   if (lowerCommand.includes('organize') && lowerCommand.includes('project')) {
@@ -362,8 +375,12 @@ async function processAICommand(command) {
       for (const [category, files] of Object.entries(organized)) {
         message += `• ${category}: ${files.length} files\n`;
       }
-      message += "\nWould you like me to create folders and move these files?";
+      message += "\n\nWould you like me to execute this organization? " +
+                 "Reply 'yes' or 'execute' to proceed.";
       addChatMessage(message, 'assistant');
+      
+      // Store the organization plan for execution
+      window.pendingOrganization = organized;
     } catch (error) {
       console.error('AI organization error:', error);
       // Fallback to basic organization
@@ -384,7 +401,10 @@ async function processAICommand(command) {
       for (const [category, files] of Object.entries(organized)) {
         message += `• ${category}: ${files.length} files\n`;
       }
+      message += "\n\nReply 'yes' to execute, or give me more specific " +
+                 "instructions.";
       addChatMessage(message, 'assistant');
+      window.pendingOrganization = organized;
     } catch (error) {
       const helpMsg = "I can help you organize files by type, date, or " +
                       "project, find duplicates, or identify large files. " +
@@ -446,9 +466,10 @@ async function organizeByType() {
     for (const [ext, files] of Object.entries(organized)) {
       message += `• ${ext}: ${files.length} files\n`;
     }
-    message += "\nWould you like me to create folders and move these files?";
+    message += "\n\nReply 'yes' to execute this organization.";
     
     addChatMessage(message, 'assistant');
+    window.pendingOrganization = organized;
   } catch (error) {
     console.error('Error organizing files:', error);
     addChatMessage('Error: Failed to organize files. ' + error.message, 
@@ -476,8 +497,10 @@ async function organizeByDate() {
   for (const [month, files] of Object.entries(filesByMonth)) {
     message += `• ${month}: ${files.length} files\n`;
   }
+  message += "\n\nReply 'yes' to execute this organization.";
   
   addChatMessage(message, 'assistant');
+  window.pendingOrganization = filesByMonth;
 }
 
 // Organize by project using AI
@@ -502,9 +525,10 @@ async function organizeByProject() {
     for (const [project, files] of Object.entries(projects)) {
       message += `• ${project}: ${Array.isArray(files) ? files.length : 'various'} files\n`;
     }
-    message += "\nWould you like me to create folders and organize these files?";
+    message += "\n\nReply 'yes' to execute this organization.";
     
     addChatMessage(message, 'assistant');
+    window.pendingOrganization = { projects: projects, files: currentFiles };
   } catch (error) {
     console.error('Error detecting projects:', error);
     addChatMessage("I had trouble detecting projects. You can try organizing " +
@@ -559,6 +583,263 @@ function findLargeFiles() {
   });
   
   addChatMessage(message, 'assistant');
+}
+
+// Helper function for path joining (since we can't use Node.js path in renderer)
+function joinPath(...parts) {
+  const filtered = parts.filter(p => p && p !== '.');
+  if (filtered.length === 0) return '';
+  
+  // Determine separator based on first path
+  const firstPath = filtered[0];
+  const separator = firstPath.includes('\\') ? '\\' : '/';
+  
+  let result = filtered[0];
+  for (let i = 1; i < filtered.length; i++) {
+    const part = filtered[i];
+    // Remove leading separator from part
+    const cleanPart = part.replace(/^[\\\/]+/, '');
+    if (!result.endsWith(separator) && result !== '') {
+      result += separator;
+    }
+    result += cleanPart;
+  }
+  
+  // Normalize separators
+  return result.replace(/[\\\/]+/g, separator);
+}
+
+function dirname(filePath) {
+  if (!filePath) return '';
+  const separator = filePath.includes('\\') ? '\\' : '/';
+  const parts = filePath.split(separator);
+  parts.pop();
+  return parts.join(separator) || separator;
+}
+
+// Execute organization plan from AI suggestions
+async function executeOrganization(organized) {
+  if (!currentDirectory) {
+    addChatMessage("Error: No directory selected.", 'assistant');
+    return;
+  }
+  
+  addChatMessage("Executing organization... This may take a moment.", 
+                 'assistant');
+  
+  const operations = [];
+  const basePath = currentDirectory;
+  
+  // Handle project-based organization (different structure)
+  if (organized.projects && organized.files) {
+    const projects = organized.projects;
+    const allFiles = organized.files;
+    
+    for (const [projectName, projectFiles] of Object.entries(projects)) {
+      // Create folder for project
+      const projectFolder = joinPath(basePath, projectName);
+      operations.push({
+        type: 'create-folder',
+        path: projectFolder
+      });
+      
+      // Move files to project folder (projectFiles might be array or pattern)
+      if (Array.isArray(projectFiles)) {
+        projectFiles.forEach(fileName => {
+          const file = allFiles.find(f => f.name === fileName || 
+            f.name.includes(fileName));
+          if (file && file.path) {
+            const destination = joinPath(projectFolder, file.name);
+            if (file.path !== destination) {
+              operations.push({
+                type: 'move',
+                source: file.path,
+                destination: destination
+              });
+            }
+          }
+        });
+      } else {
+        // If it's a pattern, try to match files
+        const pattern = projectFiles.toLowerCase();
+        allFiles.forEach(file => {
+          if (file.name.toLowerCase().includes(pattern)) {
+            const destination = joinPath(projectFolder, file.name);
+            if (file.path !== destination) {
+              operations.push({
+                type: 'move',
+                source: file.path,
+                destination: destination
+              });
+            }
+          }
+        });
+      }
+    }
+  } else {
+    // Standard organization (category-based)
+    for (const [category, files] of Object.entries(organized)) {
+      if (!Array.isArray(files) || files.length === 0) continue;
+      
+      // Create folder for category
+      const categoryFolder = joinPath(basePath, category);
+      operations.push({
+        type: 'create-folder',
+        path: categoryFolder
+      });
+      
+      // Move files to category folder
+      files.forEach(file => {
+        if (file.path && file.name) {
+          const destination = joinPath(categoryFolder, file.name);
+          if (file.path !== destination) {
+            operations.push({
+              type: 'move',
+              source: file.path,
+              destination: destination
+            });
+          }
+        }
+      });
+    }
+  }
+  
+  if (operations.length === 0) {
+    addChatMessage("No operations to perform.", 'assistant');
+    return;
+  }
+  
+  try {
+    // Execute batch operations
+    const result = await window.electronAPI.batchOperations(operations);
+    
+    let message = `Completed: ${result.successful} successful, ` +
+                  `${result.failed} failed out of ${result.total} operations.\n\n`;
+    
+    if (result.failed > 0) {
+      message += "Errors:\n";
+      result.results.forEach(r => {
+        if (!r.success) {
+          message += `• ${r.operation.type}: ${r.error}\n`;
+        }
+      });
+    }
+    
+    addChatMessage(message, 'assistant');
+    
+    // Reload directory to show changes
+    if (result.successful > 0) {
+      await loadDirectory(currentDirectory);
+    }
+  } catch (error) {
+    addChatMessage(`Error executing organization: ${error.message}`, 
+                   'assistant');
+  }
+}
+
+// Handle direct file operation commands
+async function handleDirectFileOperation(command) {
+  const lowerCommand = command.toLowerCase().trim();
+  
+  // Delete file: "delete filename.txt" or "remove filename.txt"
+  if ((lowerCommand.startsWith('delete ') || 
+       lowerCommand.startsWith('remove ')) && 
+      !lowerCommand.includes('delete all')) {
+    const fileName = command.substring(command.indexOf(' ') + 1).trim();
+    const file = currentFiles.find(f => 
+      f.name.toLowerCase() === fileName.toLowerCase());
+    
+    if (!file) {
+      addChatMessage(`File "${fileName}" not found.`, 'assistant');
+      return true;
+    }
+    
+    // Confirm deletion
+    const confirmed = confirm(`Delete "${file.name}"? This cannot be undone.`);
+    if (!confirmed) {
+      addChatMessage("Deletion cancelled.", 'assistant');
+      return true;
+    }
+    
+    try {
+      const result = await window.electronAPI.deleteFile(file.path);
+      if (result.success) {
+        addChatMessage(`Deleted "${file.name}" successfully.`, 'assistant');
+        await loadDirectory(currentDirectory);
+      } else {
+        addChatMessage(`Error deleting file: ${result.error}`, 'assistant');
+      }
+    } catch (error) {
+      addChatMessage(`Error: ${error.message}`, 'assistant');
+    }
+    return true;
+  }
+  
+  // Rename file: "rename old.txt to new.txt" or "rename old.txt new.txt"
+  if (lowerCommand.startsWith('rename ')) {
+    let parts = command.substring(7).split(/\s+(?:to|=>|->)\s+/i);
+    if (parts.length < 2) {
+      parts = command.substring(7).split(/\s+/);
+    }
+    
+    if (parts.length >= 2) {
+      const oldName = parts[0].trim();
+      const newName = parts[parts.length - 1].trim();
+      const file = currentFiles.find(f => 
+        f.name.toLowerCase() === oldName.toLowerCase());
+      
+      if (!file) {
+        addChatMessage(`File "${oldName}" not found.`, 'assistant');
+        return true;
+      }
+      
+      const fileDir = dirname(file.path);
+      const newPath = joinPath(fileDir, newName);
+      
+      try {
+        const result = await window.electronAPI.renameFile(file.path, newPath);
+        if (result.success) {
+          addChatMessage(`Renamed "${oldName}" to "${newName}".`, 'assistant');
+          await loadDirectory(currentDirectory);
+        } else {
+          addChatMessage(`Error renaming: ${result.error}`, 'assistant');
+        }
+      } catch (error) {
+        addChatMessage(`Error: ${error.message}`, 'assistant');
+      }
+      return true;
+    }
+  }
+  
+  // Create folder: "create folder name" or "mkdir name"
+  if (lowerCommand.startsWith('create folder ') || 
+      lowerCommand.startsWith('mkdir ') ||
+      lowerCommand.startsWith('create directory ')) {
+    const folderName = command.replace(/^(create folder|mkdir|create directory)\s+/i, 
+                                       '').trim();
+    
+    if (!folderName) {
+      addChatMessage("Please specify a folder name.", 'assistant');
+      return true;
+    }
+    
+    const folderPath = joinPath(currentDirectory, folderName);
+    
+    try {
+      const result = await window.electronAPI.createFolder(folderPath);
+      if (result.success) {
+        addChatMessage(`Created folder "${folderName}".`, 'assistant');
+        await loadDirectory(currentDirectory);
+      } else {
+        addChatMessage(`Error creating folder: ${result.error}`, 'assistant');
+      }
+    } catch (error) {
+      addChatMessage(`Error: ${error.message}`, 'assistant');
+    }
+    return true;
+  }
+  
+  return false;
 }
 
 // Utility functions
